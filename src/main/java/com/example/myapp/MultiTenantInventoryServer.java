@@ -8,27 +8,31 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.nio.charset.StandardCharsets;
 
 @SpringBootApplication
 @RestController
 public class MultiTenantInventoryServer {
     private static final Map<String, Map<String, String>> users = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, String>> tenantFiles = new ConcurrentHashMap<>();
+    private static final Map<String, Map<String, String>> tenants = new ConcurrentHashMap<>();
 
     private static void initializeUsers() {
         Map<String, String> sampleUser = new HashMap<>();
-        sampleUser.put("password", "password1");
+        sampleUser.put("password", hashPassword("password1"));
         sampleUser.put("role", "user");
-        users.put("user1", sampleUser);
+        users.put("user", sampleUser);
 
         Map<String, String> adminUser = new HashMap<>();
-        adminUser.put("password", "password2");
+        adminUser.put("password", hashPassword("password2"));
         adminUser.put("role", "admin");
-        users.put("admin1", adminUser); // Adding an admin user
+        users.put("admin", adminUser); // Adding an admin user
     }
 
     // Define a set of admin usernames
-    private static final Set<String> adminUsernames = new HashSet<>(Arrays.asList("admin1", "admin2"));
+    private static final Set<String> adminUsernames = new HashSet<>(Arrays.asList("admin", "admin1", "admin2"));
 
     public static void main(String[] args) {
         initializeUsers();
@@ -71,11 +75,31 @@ public class MultiTenantInventoryServer {
         }
 
         Map<String, String> newUser = new HashMap<>();
-        newUser.put("password", password);
+        newUser.put("password", hashPassword(password));
         newUser.put("role", role);
 
         users.put(username, newUser);
         return ResponseEntity.ok("User '" + username + "' created successfully.");
+    }
+
+    @PostMapping("/admin/createTenant")
+    public ResponseEntity<String> createTenant(@RequestBody Map<String, String> tenantData) {
+        String adminUsername = tenantData.get("adminUsername");
+        if (!isAdmin(adminUsername)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied. Only admins can create tenants.");
+        }
+
+        String tenantName = tenantData.get("tenantName");
+        if (tenantName == null || tenantName.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid tenant data. Please provide a valid tenant name.");
+        }
+
+        if (tenants.containsKey(tenantName)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Tenant with the same name already exists.");
+        }
+
+        tenants.put(tenantName, new ConcurrentHashMap<>());
+        return ResponseEntity.ok("Tenant '" + tenantName + "' created successfully.");
     }
 
     @PostMapping("/upload/{tenant}")
@@ -106,7 +130,7 @@ public class MultiTenantInventoryServer {
 
     private boolean authenticate(String username, String password) {
         Map<String, String> user = users.get(username);
-        return user != null && user.get("password").equals(password);
+        return user != null && user.get("password").equals(hashPassword(password));
     }
 
     private boolean isAdmin(String username) {
@@ -116,5 +140,28 @@ public class MultiTenantInventoryServer {
     private boolean hasAccess(String username, String tenant) {
         Map<String, String> user = users.get(username);
         return user != null && (user.get("role").equals("admin") || username.equals(tenant));
+    }
+
+    // Method to hash passwords
+    private static String hashPassword(String password) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] encodedhash = digest.digest(password.getBytes(StandardCharsets.UTF_8));
+            return bytesToHex(encodedhash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("Error hashing password", e);
+        }
+    }
+
+    private static String bytesToHex(byte[] hash) {
+        StringBuilder hexString = new StringBuilder(2 * hash.length);
+        for (byte b : hash) {
+            String hex = Integer.toHexString(0xff & b);
+            if(hex.length() == 1) {
+                hexString.append('0');
+            }
+            hexString.append(hex);
+        }
+        return hexString.toString();
     }
 }

@@ -10,42 +10,71 @@ public class MultiTenantInventoryClient {
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
         String serverUrl = "http://localhost:8080";
+        String userRole = null;
 
         while (true) {
-            System.out.println("Choose an action:");
-            System.out.println("1. Login");
-            System.out.println("2. Create User");
-            System.out.println("3. Upload File");
-            System.out.println("4. List Files");
-            System.out.println("5. Exit");
-            System.out.print("Enter the number of your choice: ");
+            displayMenu(userRole);
 
-            int choice = scanner.nextInt();
-            scanner.nextLine(); // Consume newline
+            System.out.print("Enter the number of your choice: ");
+            int choice = readInt(scanner);
 
             switch (choice) {
                 case 1:
-                    login(scanner, serverUrl);
+                    userRole = login(scanner, serverUrl);
                     break;
                 case 2:
-                    createUser(scanner, serverUrl);
-                    break;
-                case 3:
                     uploadFile(scanner, serverUrl);
                     break;
-                case 4:
+                case 3:
                     listFiles(scanner, serverUrl);
                     break;
-                case 5:
+                case 4:
                     System.out.println("Exiting the client.");
                     return;
+                case 5:
+                    if ("admin".equals(userRole)) {
+                        createUser(scanner, serverUrl);
+                    } else {
+                        System.out.println("Unauthorized action!");
+                    }
+                    break;
+                case 6:
+                    if ("admin".equals(userRole)) {
+                        createTenant(scanner, serverUrl);
+                    } else {
+                        System.out.println("Unauthorized action!");
+                    }
+                    break;
                 default:
                     System.out.println("Invalid choice. Please enter a valid option.");
             }
         }
     }
 
-    private static void login(Scanner scanner, String serverUrl) {
+    private static void displayMenu(String userRole) {
+        System.out.println("Choose an action:");
+        System.out.println("1. Login");
+        System.out.println("2. Upload File");
+        System.out.println("3. List Files");
+        System.out.println("4. Exit");
+
+        if ("admin".equals(userRole)) {
+            System.out.println("5. Create User");
+            System.out.println("6. Create Tenant");
+        }
+    }
+
+    private static int readInt(Scanner scanner) {
+        while (!scanner.hasNextInt()) {
+            System.out.println("Invalid input. Please enter a number.");
+            scanner.next(); // consume the invalid input
+        }
+        int number = scanner.nextInt();
+        scanner.nextLine(); // consume the newline character
+        return number;
+    }
+
+    private static String login(Scanner scanner, String serverUrl) {
         System.out.print("Enter username: ");
         String username = scanner.nextLine();
         System.out.print("Enter password: ");
@@ -54,6 +83,32 @@ public class MultiTenantInventoryClient {
         Map<String, String> credentials = Map.of("username", username, "password", password);
         String loginResult = sendHttpPostRequest(serverUrl + "/login", credentials);
         System.out.println("Login result: " + loginResult);
+
+        if (loginResult != null && loginResult.startsWith("Login successful for user:")) {
+            String userRole = loginResult.substring(loginResult.lastIndexOf(":") + 1).trim();
+            System.out.println("Logged in as: " + userRole);
+            return userRole;
+        } else {
+            System.out.println("Login failed. Please try again.");
+            return null;
+        }
+    }
+
+
+    private static void createTenant(Scanner scanner, String serverUrl) {
+        System.out.print("Enter admin username: ");
+        String adminUsername = scanner.nextLine();
+
+        System.out.print("Enter tenant name: ");
+        String tenantName = scanner.nextLine();
+
+        Map<String, String> tenantData = Map.of(
+                "adminUsername", adminUsername,
+                "tenantName", tenantName
+        );
+
+        String createTenantResult = sendHttpPostRequest(serverUrl + "/admin/createTenant", tenantData);
+        System.out.println("Create tenant result: " + createTenantResult);
     }
 
     private static void uploadFile(Scanner scanner, String serverUrl) {
