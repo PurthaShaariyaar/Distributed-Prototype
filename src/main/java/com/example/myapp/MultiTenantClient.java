@@ -1,6 +1,7 @@
 package com.example.myapp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import java.io.*;
 import java.net.*;
@@ -57,6 +58,13 @@ public class MultiTenantClient {
                         System.out.println("Unauthorized action!");
                     }
                     break;
+                case 11:
+                    if ("admin".equals(userRole)) {
+                        viewAllUsers(scanner, serverUrl);
+                    } else {
+                        System.out.println("Unauthorized action!");
+                    }
+                    break;
                 default:
                     System.out.println("Invalid choice. Please enter a valid option.");
             }
@@ -77,6 +85,7 @@ public class MultiTenantClient {
         if ("admin".equals(userRole)) {
             System.out.println("9. Create User");
             System.out.println("10. Create Tenant");
+            System.out.println("11. View All Users and Their Permissions");
         }
     }
 
@@ -125,6 +134,21 @@ public class MultiTenantClient {
 
         String createTenantResult = sendHttpPostRequest(serverUrl + "/admin/createTenant", tenantData);
         System.out.println("Create tenant result: " + createTenantResult);
+    }
+
+    private static void viewAllUsers(Scanner scanner, String serverUrl) {
+        System.out.print("Enter admin username: ");
+        String adminUsername = scanner.nextLine();
+
+        Map<String, String> queryParams = Map.of("adminUsername", adminUsername);
+        Map<String, Map<String, String>> users = sendHttpGetRequestForUsers(serverUrl + "/admin/users", queryParams);
+        if (users != null) {
+            users.forEach((username, details) -> {
+                System.out.println("Username: " + username + ", Role: " + details.get("role") + ", Accessible Tenants: " + details.get("accessibleTenants"));
+            });
+        } else {
+            System.out.println("Failed to retrieve users.");
+        }
     }
 
     private static void uploadFile(Scanner scanner, String serverUrl) {
@@ -226,6 +250,9 @@ public class MultiTenantClient {
         System.out.print("Enter new file content: ");
         String fileContent = scanner.nextLine();
 
+        System.out.print("Enter password: "); // Add password prompt
+        String password = scanner.nextLine();
+
         // Construct the request data with updated file content
         Map<String, String> fileData = new HashMap<>();
         fileData.put("username", username);
@@ -247,6 +274,9 @@ public class MultiTenantClient {
         System.out.print("Enter file name to delete: ");
         String fileName = scanner.nextLine();
 
+        System.out.print("Enter password: "); // Add password prompt
+        String password = scanner.nextLine();
+
         String deleteResult = sendHttpDeleteRequest(serverUrl + "/file/" + tenant + "/" + fileName, username);
         System.out.println("Delete result: " + deleteResult);
     }
@@ -261,6 +291,8 @@ public class MultiTenantClient {
         String tenant = scanner.nextLine();
         System.out.print("Enter the file name to download: ");
         String fileName = scanner.nextLine();
+        System.out.print("Enter password: "); // Add password prompt
+        String password = scanner.nextLine();
 
         // assign file data to get each byte of the file
         byte[] fileData = sendHttpGetRequestForFile(serverUrl + "/download/" + tenant + "/" + fileName, username);
@@ -310,22 +342,35 @@ public class MultiTenantClient {
             StringBuilder urlBuilder = new StringBuilder(url);
             urlBuilder.append("?");
             for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-                urlBuilder.append(entry.getKey()).append("=").append(entry.getValue()).append("&");
+                urlBuilder.append(URLEncoder.encode(entry.getKey(), "UTF-8"))
+                        .append("=")
+                        .append(URLEncoder.encode(entry.getValue(), "UTF-8"))
+                        .append("&");
             }
             String finalUrl = urlBuilder.toString();
 
             HttpURLConnection connection = (HttpURLConnection) new URL(finalUrl).openConnection();
             connection.setRequestMethod("GET");
 
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(connection.getInputStream(), "utf-8"))) {
-                StringBuilder response = new StringBuilder();
-                String responseLine;
-                while ((responseLine = br.readLine()) != null) {
-                    response.append(responseLine.trim());
+            int responseCode = connection.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                // Read the response from the server
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(connection.getInputStream(), "utf-8"))) {
+                    StringBuilder response = new StringBuilder();
+                    String responseLine;
+                    while ((responseLine = br.readLine()) != null) {
+                        response.append(responseLine.trim());
+                    }
+
+                    // Convert the response string to a Map
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    return objectMapper.readValue(response.toString(), new TypeReference<Map<String, List<Map<String, String>>>>() {});
                 }
-                ObjectMapper objectMapper = new ObjectMapper();
-                return objectMapper.readValue(response.toString(), Map.class);
+            } else {
+                // Handle non-OK response
+                System.out.println("Server responded with status code: " + responseCode);
+                return Collections.emptyMap();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -423,4 +468,52 @@ public class MultiTenantClient {
             return null;
         }
     }
+
+    private static Map<String, Map<String, String>> sendHttpGetRequestForUsers(String url, Map<String, String> queryParams) {
+        try {
+            // Construct the URL with query parameters
+            StringBuilder urlBuilder = new StringBuilder(url);
+            if (queryParams != null && !queryParams.isEmpty()) {
+                urlBuilder.append("?");
+                for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+                    urlBuilder.append(URLEncoder.encode(entry.getKey(), "UTF-8"))
+                            .append("=")
+                            .append(URLEncoder.encode(entry.getValue(), "UTF-8"))
+                            .append("&");
+                }
+            }
+
+            // Remove the last '&' or '?' character
+            if (urlBuilder.charAt(urlBuilder.length() - 1) == '&' || urlBuilder.charAt(urlBuilder.length() - 1) == '?') {
+                urlBuilder.deleteCharAt(urlBuilder.length() - 1);
+            }
+
+            // Open a connection to the URL
+            HttpURLConnection connection = (HttpURLConnection) new URL(urlBuilder.toString()).openConnection();
+            connection.setRequestMethod("GET");
+
+            int responseCode = connection.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                // Read the response
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(connection.getInputStream(), "utf-8"))) {
+                    StringBuilder response = new StringBuilder();
+                    String responseLine;
+                    while ((responseLine = br.readLine()) != null) {
+                        response.append(responseLine.trim());
+                    }
+
+                    // Convert the response string to a Map
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    return objectMapper.readValue(response.toString(), new TypeReference<Map<String, Map<String, String>>>() {});
+                }
+            } else {
+                System.out.println("Server responded with status code: " + responseCode);
+                return null;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
 }

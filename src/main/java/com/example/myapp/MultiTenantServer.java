@@ -29,19 +29,12 @@ public class MultiTenantServer {
         Map<String, String> sampleUser = new HashMap<>();
         sampleUser.put("password", hashPassword("password1"));
         sampleUser.put("role", "user");
-        sampleUser.put("accessibleTenants", "[]");
         users.put("user", sampleUser);
 
         Map<String, String> adminUser = new HashMap<>();
         adminUser.put("password", hashPassword("password2"));
         adminUser.put("role", "admin");
         users.put("admin", adminUser); // Adding an admin user
-
-        Map<String, String> staffAUser = new HashMap<>();
-        staffAUser.put("password", hashPassword("staffAPassword")); // Replace with actual password
-        staffAUser.put("role", "user");
-        staffAUser.put("accessibleTenants", "[\"s1\"]"); // Grant access to tenant s1
-        users.put("staffA", staffAUser);
     }
 
     // Define a set of admin usernames
@@ -91,6 +84,7 @@ public class MultiTenantServer {
         newUser.put("password", hashPassword(password));
         newUser.put("role", role);
 
+        // Get and store accessible tenants in the user's details
         String accessibleTenantsJson = userData.getOrDefault("accessibleTenants", "[]");
         newUser.put("accessibleTenants", accessibleTenantsJson);
 
@@ -149,88 +143,103 @@ public class MultiTenantServer {
 
     // Mapping to read files
     @GetMapping("/file/{tenant}/{filename}")
-    public ResponseEntity<String> readFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username) {
-        // if user does not have access to file within tenant return access denied error
+    public ResponseEntity<String> readFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username, @RequestParam(required = false) String password) {
+        if (password == null || !authenticate(username, password)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized access");
+        }
+
         if (!hasAccess(username, tenant)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
         }
 
-        // if file does not exist return file not found error
         Map<String, String> files = tenantFiles.getOrDefault(tenant, new HashMap<>());
         if (!files.containsKey(fileName)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("File not found");
         }
 
-        // return the file
         return ResponseEntity.ok(files.get(fileName));
     }
 
+
     // Mapping to update files
     @PutMapping("/file/{tenant}/{fileName}")
-    public ResponseEntity<String> updateFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username, @RequestBody String fileContent) {
-        // if user does not have access to update files return access denied error
+    public ResponseEntity<String> updateFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username, @RequestParam(required = false) String password, @RequestBody String fileContent) {
+        if (password == null || !authenticate(username, password)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized access");
+        }
+
         if (!hasAccess(username, tenant)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied.");
         }
 
-        // input in new file content to file
         Map<String, String> files = tenantFiles.computeIfAbsent(tenant, k -> new ConcurrentHashMap<>());
         files.put(fileName, fileContent);
-
-        // return updated successfully
         return ResponseEntity.ok("File updated successfully.");
     }
 
+
     // Mapping to delete files
     @DeleteMapping("/file/{tenant}/{fileName}")
-    public ResponseEntity<String> deleteFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username) {
-        // if user does not have access to delete files return access denied error
+    public ResponseEntity<String> deleteFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username, @RequestParam(required = false) String password) {
+        if (password == null || !authenticate(username, password)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized access");
+        }
+
         if (!hasAccess(username, tenant)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied.");
         }
 
-        // if file is present remove it, if not return file not found error
         Map<String, String> files = tenantFiles.getOrDefault(tenant, new HashMap<>());
         if (files.remove(fileName) == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("File not found.");
         }
 
-        // return deleted successfully
         return ResponseEntity.ok("File deleted successfully");
     }
 
     // Mapping to download file
     @GetMapping("/download/{tenant}/{fileName}")
-    public ResponseEntity<byte[]> downloadFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username) {
-        // if user does not have access return nothing
+    public ResponseEntity<byte[]> downloadFile(@PathVariable String tenant, @PathVariable String fileName, @RequestParam String username, @RequestParam(required = false) String password) {
+        if (password == null || !authenticate(username, password)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
         if (!hasAccess(username, tenant)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(null);
         }
 
-        // if file does not exist return nothing
         Map<String, String> files = tenantFiles.getOrDefault(tenant, new HashMap<>());
         if (!files.containsKey(fileName)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
         }
 
-        // get the file
         String fileContent = files.get(fileName);
         HttpHeaders headers = new HttpHeaders();
         headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fileName + ".txt");
-
-        // return the file in text format
         return ResponseEntity.ok()
                 .headers(headers)
                 .contentType(MediaType.TEXT_PLAIN)
                 .body(fileContent.getBytes(StandardCharsets.UTF_8));
     }
 
+    @GetMapping("/admin/users")
+    public ResponseEntity<Object> listUsers(@RequestParam String adminUsername) {
+        if (!isAdmin(adminUsername)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied. Only admins can view users.");
+        }
+
+        return ResponseEntity.ok(users);
+    }
 
 
     private boolean authenticate(String username, String password) {
         Map<String, String> user = users.get(username);
-        return user != null && user.get("password").equals(hashPassword(password));
+        if (user == null || password == null) {
+            return false;
+        }
+        return user.get("password").equals(hashPassword(password));
     }
+
 
     private boolean isAdmin(String username) {
         return adminUsernames.contains(username);
